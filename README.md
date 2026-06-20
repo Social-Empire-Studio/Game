@@ -28,10 +28,22 @@ This project is dedicated to preserving this Flash game so that it's not lost to
 - Download the latest Bundle version from the [Latest Release](#latest-release) section.
 - Extract the downloaded zip file to a suitable location.
 
+## How to Run the Server (Node.js)
+
+The server has been ported from Python/Flask to **Node.js / Express**. You need [Node.js](https://nodejs.org/) (v18+) installed.
+
+```bash
+npm install      # install dependencies (first time only)
+npm start        # start the server
+```
+
+The server listens on **`http://localhost:3000/`**.
+
 ## How to Play
 
-- Run the *social-emperors* executable.
-- Open your flash browser and navigate to `http://127.0.0.1:5050/`.
+- Run the server with `npm start`.
+- Open your flash browser (or a Ruffle-enabled browser) and navigate to `http://localhost:3000/`.
+- A Ruffle-based player is also available at `http://localhost:3000/ruffle.html`.
 
 :information_source: To play on GNU/Linux check [this page](LINUX.md).
 

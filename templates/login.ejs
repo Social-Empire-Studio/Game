@@ -21,7 +21,7 @@
 						<h2 class="uiHeaderTitle" aria-hidden="true" style="margin-left: 2px; display: inline-block;">
 							<a href="/" style="text-decoration: none;">Social Empires </a>
 						</h2>
-						<p style="display: inline-block; margin: 0 0 4px 6px;">By the Social Emperors team ~ {{ version | default("?")}}</p>
+						<p style="display: inline-block; margin: 0 0 4px 6px;">By the Social Emperors team ~ <%= version || "?" %></p>
 					</div>
 				</div>
 			</div>
@@ -29,7 +29,7 @@
 			<div class="phl ptm uiInterstitialContent" style="overflow: auto; display: inblock;">
 				<br>
 				<div style="margin-left:20px; font-size:13px; float: left;">
-					{% if saves_info %}
+					<% if (saves_info && saves_info.length) { %>
 					<form method="post">
 						<!-- VILLAGE SELECTION -->
 						<b>Select a village</b>
@@ -39,9 +39,9 @@
 						</div>
 						<div style="float: left">
 							<select id="USERID" name="USERID" style="height: 27px; min-width: 330px;" required>
-								{% for save in saves_info %}
-								<option value="{{save.userid}}" title="{{save.userid}}">{{save.name}} ~ level {{save.level}} ({{save.xp}} xp)</option>
-								{% endfor %}
+								<% saves_info.forEach(function(save){ %>
+								<option value="<%= save.userid %>" title="<%= save.userid %>"><%= save.name %> ~ level <%= save.level %> (<%= save.xp %> xp)</option>
+								<% }); %>
 							</select>
 						</div>
 						<br><br>
@@ -72,7 +72,7 @@
 					<br>
 					<!-- NEW VILLAGE -->
 					<p style="font-size:13px; display: inline;">Or </p>
-					{% endif %}
+					<% } %>
 					<p style="font-size:13px; display: inline;">
 						<b><a href="/new.html">Create a new empire</a></b>
 					</p>

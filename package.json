@@ -1,0 +1,19 @@
+{
+  "name": "social-emperors-server",
+  "version": "0.4.0",
+  "description": "Social Empires preservation server (Node.js / Express port)",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js"
+  },
+  "license": "GPL-3.0",
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "dotenv": "^17.4.2",
+    "ejs": "^3.1.10",
+    "express": "^4.19.2",
+    "express-session": "^1.18.0",
+    "fast-json-patch": "^3.1.1",
+    "mysql2": "^3.22.5"
+  }
+}
