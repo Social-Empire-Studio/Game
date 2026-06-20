@@ -1,29 +1,27 @@
-// Ported from server.py — Express server on port 3000
+// Express server — MySQL-backed accounts + saves (no JSON file storage).
 console.log(" [+] Loading basics...");
 
 const fs = require("fs");
 const path = require("path");
-const http = require("http");
 const https = require("https");
 const express = require("express");
 const session = require("express-session");
 
+const { server: serverCfg, sessionSecret } = require("./config");
+
 console.log(" [+] Loading game config...");
 const { get_game_config } = require("./gameConfig");
 
-console.log(" [+] Loading players...");
+console.log(" [+] Loading modules...");
+const db = require("./db");
 const { get_player_info, get_neighbor_info } = require("./playerInfo");
 const {
   load_saved_villages,
   all_saves_userid,
-  all_saves_info,
   save_info,
-  new_village,
   fb_friends_str,
 } = require("./sessions");
-load_saved_villages();
-
-console.log(" [+] Loading server...");
+const auth = require("./auth");
 const { command } = require("./command");
 const { timestamp_now } = require("./engine");
 const { version_name } = require("./version");
@@ -31,28 +29,26 @@ const { Constant } = require("./constants");
 const { get_quest_map } = require("./quests");
 const { ASSETS_DIR, STUB_DIR, TEMPLATES_DIR, BASE_DIR } = require("./bundle");
 
-const host = "127.0.0.1";
-const port = 3000;
+const host = serverCfg.host;
+const port = serverCfg.port;
 
 const app = express();
 
 app.set("view engine", "ejs");
 app.set("views", TEMPLATES_DIR);
 
-// Body parsers (Flask's request.values = query + form)
 app.use(express.urlencoded({ extended: true, limit: "50mb" }));
 app.use(express.json({ limit: "50mb" }));
 
 app.use(
   session({
-    secret: "SECRET_KEY",
+    secret: sessionSecret,
     resave: false,
     saveUninitialized: true,
   })
 );
 
-// CORS — Ruffle loads the .swf then the SWF makes cross-origin requests.
-// Allow everything so the Flash content (run by Ruffle) can talk to the server.
+// CORS — Ruffle loads the .swf, then the SWF makes cross-origin requests.
 app.use((req, res, next) => {
   res.header("Access-Control-Allow-Origin", "*");
   res.header("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
@@ -66,51 +62,74 @@ function values(req) {
   return Object.assign({}, req.query, req.body);
 }
 
+// Async error wrapper
+const wrap = (fn) => (req, res, next) => Promise.resolve(fn(req, res, next)).catch(next);
+
 console.log(" [+] Configuring server routes...");
 
-//////////
-// PAGES //
-//////////
+//////////////////
+// AUTH / PAGES  //
+//////////////////
 
-app.all("/", (req, res) => {
-  // Log out previous session
-  delete req.session.USERID;
-  delete req.session.GAMEVERSION;
-  // Reload saves
-  load_saved_villages();
+const DEFAULT_GAMEVERSION = "SocialEmpires0926bsec.swf";
 
-  if (req.method === "POST") {
-    req.session.USERID = req.body.USERID;
-    req.session.GAMEVERSION = req.body.GAMEVERSION;
-    console.log("[LOGIN] USERID:", req.body.USERID);
-    console.log("[LOGIN] GAMEVERSION:", req.body.GAMEVERSION);
+// Login / register screen
+app.get("/", (req, res) => {
+  return res.render("login", { version: version_name, error: null });
+});
+
+app.post(
+  "/register",
+  wrap(async (req, res) => {
+    const { username, password, empire } = req.body;
+    const result = await auth.register(username, password, empire);
+    if (!result.ok) {
+      return res.status(400).render("login", { version: version_name, error: result.error });
+    }
+    req.session.USERID = result.userid;
+    req.session.USERNAME = username;
+    req.session.GAMEVERSION = DEFAULT_GAMEVERSION;
+    console.log("[REGISTER] new account:", username, "->", result.userid);
     return res.redirect("/ruffle.html");
-  }
-  // GET -> login page
-  const saves_info = all_saves_info();
-  return res.render("login", { saves_info, version: version_name });
+  })
+);
+
+app.post(
+  "/login",
+  wrap(async (req, res) => {
+    const { username, password } = req.body;
+    const result = await auth.login(username, password);
+    if (!result.ok) {
+      return res.status(401).render("login", { version: version_name, error: result.error });
+    }
+    req.session.USERID = result.userid;
+    req.session.USERNAME = username;
+    req.session.GAMEVERSION = DEFAULT_GAMEVERSION;
+    console.log("[LOGIN] USERID:", result.userid);
+    return res.redirect("/ruffle.html");
+  })
+);
+
+app.get("/logout", (req, res) => {
+  req.session.destroy(() => res.redirect("/"));
 });
 
-// /play.html now redirects to the Ruffle player (the native Flash plugin
-// no longer exists in modern browsers). The original embed-based page is
-// still rendered if you explicitly request /play-flash.html.
-app.get("/play.html", (req, res) => {
+// Auth gate for the game pages
+function requireAuth(req, res, next) {
   if (!("USERID" in req.session)) return res.redirect("/");
-  if (!("GAMEVERSION" in req.session)) return res.redirect("/");
   if (!all_saves_userid().includes(req.session.USERID)) return res.redirect("/");
-  return res.redirect("/ruffle.html");
-});
+  if (!("GAMEVERSION" in req.session)) req.session.GAMEVERSION = DEFAULT_GAMEVERSION;
+  next();
+}
 
-app.get("/play-flash.html", (req, res) => {
-  console.log(req.session);
-  if (!("USERID" in req.session)) return res.redirect("/");
-  if (!("GAMEVERSION" in req.session)) return res.redirect("/");
-  if (!all_saves_userid().includes(req.session.USERID)) return res.redirect("/");
+// /play.html redirects to the Ruffle player.
+app.get("/play.html", requireAuth, (req, res) => res.redirect("/ruffle.html"));
 
+// Native-Flash embed page (kept for completeness)
+app.get("/play-flash.html", requireAuth, (req, res) => {
   const USERID = req.session.USERID;
   const GAMEVERSION = req.session.GAMEVERSION;
   console.log("[PLAY] USERID:", USERID);
-  console.log("[PLAY] GAMEVERSION:", GAMEVERSION);
   return res.render("play", {
     save_info: save_info(USERID),
     serverTime: timestamp_now(),
@@ -121,16 +140,10 @@ app.get("/play-flash.html", (req, res) => {
   });
 });
 
-app.get("/ruffle.html", (req, res) => {
-  console.log(req.session);
-  if (!("USERID" in req.session)) return res.redirect("/");
-  if (!("GAMEVERSION" in req.session)) return res.redirect("/");
-  if (!all_saves_userid().includes(req.session.USERID)) return res.redirect("/");
-
+app.get("/ruffle.html", requireAuth, (req, res) => {
   const USERID = req.session.USERID;
   const GAMEVERSION = req.session.GAMEVERSION;
   console.log("[RUFFLE] USERID:", USERID);
-  console.log("[RUFFLE] GAMEVERSION:", GAMEVERSION);
   return res.render("ruffle", {
     save_info: save_info(USERID),
     serverTime: timestamp_now(),
@@ -138,12 +151,6 @@ app.get("/ruffle.html", (req, res) => {
     GAMEVERSION,
     SERVERIP: host,
   });
-});
-
-app.get("/new.html", (req, res) => {
-  req.session.USERID = new_village();
-  req.session.GAMEVERSION = "SocialEmpires0926bsec.swf";
-  return res.redirect("/ruffle.html");
 });
 
 app.get("/crossdomain.xml", (req, res) => {
@@ -184,7 +191,6 @@ app.get(`${SP_PREFIX}/*`, (req, res) => {
     return res.sendFile(downloadedFile);
   }
 
-  // Download from SP CDN if missing
   const directory = path.dirname(downloadedFile);
   if (!fs.existsSync(directory)) fs.mkdirSync(directory, { recursive: true });
   const URL = `https://static.socialpointgames.com/static/socialempires/assets/${assetPath}`;
@@ -204,9 +210,7 @@ app.get(`${SP_PREFIX}/*`, (req, res) => {
         });
       });
     })
-    .on("error", () => {
-      res.status(404).send("");
-    });
+    .on("error", () => res.status(404).send(""));
 });
 
 ///////////////////
@@ -217,16 +221,13 @@ const DYN_PREFIX = "/dynamic.flash1.dev.socialpoint.es/appsfb/socialempiresdev/s
 
 app.post(`${DYN_PREFIX}/track_game_status.php`, (req, res) => {
   const v = values(req);
-  console.log(
-    `track_game_status: status=${v.status}, installId=${v.installId}, user_id=${v.user_id}. --`,
-    v
-  );
+  console.log(`track_game_status: status=${v.status}, user_id=${v.user_id}.`);
   res.status(200).send("");
 });
 
 app.all(`${DYN_PREFIX}/get_game_config.php`, (req, res) => {
   const v = values(req);
-  console.log(`get_game_config: USERID: ${v.USERID}. --`, v);
+  console.log(`get_game_config: USERID: ${v.USERID}.`);
   res.json(get_game_config());
 });
 
@@ -235,7 +236,7 @@ app.post(`${DYN_PREFIX}/get_player_info.php`, (req, res) => {
   const user = "user" in v ? v.user : null;
   const map = "map" in v ? parseInt(v.map, 10) : null;
 
-  console.log(`get_player_info: USERID: ${v.USERID}. user: ${user} --`, v);
+  console.log(`get_player_info: USERID: ${v.USERID}. user: ${user}`);
 
   if (user === null || user === undefined) {
     return res.status(200).json(get_player_info(v.USERID));
@@ -255,10 +256,7 @@ app.post(`${DYN_PREFIX}/get_player_info.php`, (req, res) => {
 
 app.post(`${DYN_PREFIX}/sync_error_track.php`, (req, res) => {
   const v = values(req);
-  console.log(
-    `sync_error_track: USERID: ${v.USERID}. [Error: ${v.error}] tries: ${v.tries}. --`,
-    v
-  );
+  console.log(`sync_error_track: USERID: ${v.USERID}. [Error: ${v.error}] tries: ${v.tries}.`);
   res.status(200).send("");
 });
 
@@ -268,16 +266,15 @@ app.all("/null", (req, res) => {
   if (v.sp_ref_cat === "flash_sync_error") reason = "reload On Sync Error";
   else if (v.sp_ref_cat === "flash_reload_quest") reason = "reload On End Quest";
   else if (v.sp_ref_cat === "flash_reload_attack") reason = "reload On End Attack";
-  console.log("flash_sync_error", reason, ". --", v);
-  res.redirect("/play.html");
+  console.log("flash_sync_error", reason);
+  res.redirect("/ruffle.html");
 });
 
 app.post(`${DYN_PREFIX}/command.php`, (req, res) => {
   const v = values(req);
-  console.log(`command: USERID: ${v.USERID}. --`, v);
+  console.log(`command: USERID: ${v.USERID}.`);
 
   const data_str = v.data;
-  // First 64 chars = hash, char 64 = ';', rest = JSON payload
   if (!data_str || data_str[64] !== ";") {
     return res.status(400).json({ result: "error", reason: "bad data format" });
   }
@@ -289,8 +286,7 @@ app.post(`${DYN_PREFIX}/command.php`, (req, res) => {
 });
 
 app.all(`${DYN_PREFIX}/get_continent_ranking.php`, (req, res) => {
-  // TODO - stub
-  const response = {
+  res.json({
     world_id: 0,
     continent: [
       { posicion: 0, nivel: 1, user_id: 1111 },
@@ -302,16 +298,41 @@ app.all(`${DYN_PREFIX}/get_continent_ranking.php`, (req, res) => {
       { posicion: 6, nivel: 0 },
       { posicion: 7, nivel: 0 },
     ],
-  };
-  res.json(response);
+  });
+});
+
+// Express error handler
+app.use((err, req, res, next) => {
+  console.error(" ! Request error:", err.message);
+  if (res.headersSent) return next(err);
+  res.status(500).send("Internal server error");
 });
 
 //////////
 // MAIN //
 //////////
 
-console.log(" [+] Running server...");
+async function main() {
+  console.log(" [+] Connecting to database...");
+  try {
+    await db.init();
+  } catch (err) {
+    console.error("");
+    console.error(" [X] Could not connect to MySQL/MariaDB.");
+    console.error("     " + err.message);
+    console.error("     Check your .env settings (DB_HOST, DB_USER, DB_PASSWORD, DB_NAME).");
+    console.error("     If you use a shared host, remote MySQL connections may be blocked.");
+    console.error("");
+    process.exit(1);
+  }
 
-app.listen(port, host, () => {
-  console.log(` [+] Social Empires Server running at http://localhost:${port}/`);
-});
+  console.log(" [+] Loading players...");
+  await load_saved_villages();
+
+  console.log(" [+] Running server...");
+  app.listen(port, host, () => {
+    console.log(" [+] Social Empires Server running at http://localhost:" + port + "/");
+  });
+}
+
+main();

@@ -28,22 +28,34 @@ This project is dedicated to preserving this Flash game so that it's not lost to
 - Download the latest Bundle version from the [Latest Release](#latest-release) section.
 - Extract the downloaded zip file to a suitable location.
 
-## How to Run the Server (Node.js)
+## How to Run the Server (Node.js + MySQL)
 
-The server has been ported from Python/Flask to **Node.js / Express**. You need [Node.js](https://nodejs.org/) (v18+) installed.
+The server has been ported from Python/Flask to **Node.js / Express**, and now
+uses **accounts (username + password)** with **all player data stored in
+MySQL/MariaDB** (no more JSON save files). You need [Node.js](https://nodejs.org/)
+(v18+) and a MySQL/MariaDB database.
+
+1. Edit **`.env`** with your database connection (see [`SETUP.md`](SETUP.md) for details).
+2. Install and start:
 
 ```bash
 npm install      # install dependencies (first time only)
 npm start        # start the server
 ```
 
-The server listens on **`http://localhost:3000/`**.
+The server listens on **`http://localhost:3000/`** and creates its database
+tables automatically on first run.
+
+:information_source: Full step-by-step instructions (local DB, hosted DB /
+phpMyAdmin, troubleshooting) are in [`SETUP.md`](SETUP.md).
 
 ## How to Play
 
 - Run the server with `npm start`.
-- Open your flash browser (or a Ruffle-enabled browser) and navigate to `http://localhost:3000/`.
-- A Ruffle-based player is also available at `http://localhost:3000/ruffle.html`.
+- Open a Ruffle-enabled browser and navigate to `http://localhost:3000/`.
+- **Create an account** (username + password). An empire is generated for you.
+- You're taken straight into the game. Next time, just **log in**.
+- Everything you do is saved to MySQL.
 
 :information_source: To play on GNU/Linux check [this page](LINUX.md).
 

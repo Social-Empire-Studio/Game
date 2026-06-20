@@ -1,111 +1,73 @@
-// Ported from sessions.py
+// Player/session storage — now backed by MySQL instead of JSON files.
+//
+// A synchronous in-memory cache (__saves) mirrors the DB so the existing
+// synchronous game logic (command.js, playerInfo.js) keeps working unchanged.
+// Reads hit the cache; writes update the cache AND persist to MySQL.
 const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
 const { version_code, migrate_loaded_save } = require("./version");
 const { timestamp_now } = require("./engine");
-const { Constant } = require("./constants");
-const { VILLAGES_DIR, SAVES_DIR } = require("./bundle");
+const { VILLAGES_DIR } = require("./bundle");
+const db = require("./db");
 
-let __villages = {}; // ALL static neighbours
-let __saves = {}; // ALL saved villages
+// In-memory cache of all saves: { userid: saveDocument }
+let __saves = {};
+// userid -> account_id (needed for inserts)
+let __accountOf = {};
 
+// Empire template (the gabarit for a brand-new empire). This is NOT a save,
+// it's the blueprint, so we keep reading it from disk.
 const __initial_village = JSON.parse(
   fs.readFileSync(path.join(VILLAGES_DIR, "initial.json"), "utf-8")
 );
 
-// ---------- Load saved villages ----------
+// ---------- Load all saves from MySQL into the cache ----------
 
-function load_saved_villages() {
-  __villages = {};
+async function load_saved_villages() {
   __saves = {};
+  __accountOf = {};
+  __saves = await db.getAllSaves();
 
-  // Saves dir check
-  if (!fs.existsSync(SAVES_DIR)) {
-    try {
-      console.log(`Creating '${SAVES_DIR}' folder...`);
-      fs.mkdirSync(SAVES_DIR);
-    } catch (e) {
-      console.log(`Could not create '${SAVES_DIR}' folder.`);
-      process.exit(1);
-    }
-  }
-  if (!fs.statSync(SAVES_DIR).isDirectory()) {
-    console.log(`'${SAVES_DIR}' is not a folder... Move the file somewhere else.`);
-    process.exit(1);
+  // Map userid -> account_id
+  const [rows] = await db.getPool().query("SELECT id, userid FROM accounts");
+  for (const r of rows) {
+    __accountOf[String(r.userid)] = r.id;
   }
 
-  // Static neighbours in /villages
-  for (const file of fs.readdirSync(VILLAGES_DIR)) {
-    if (file === "initial.json" || !file.endsWith(".json")) continue;
-    process.stdout.write(` * Loading static neighbour ${file}... `);
-    let village;
-    try {
-      village = JSON.parse(fs.readFileSync(path.join(VILLAGES_DIR, file), "utf-8"));
-    } catch (e) {
-      console.log("Invalid neighbour (parse error)");
-      continue;
-    }
-    if (!is_valid_village(village)) {
-      console.log("Invalid neighbour");
-      continue;
-    }
-    const USERID = village.playerInfo.pid;
-    if (String(USERID) in __villages) {
-      console.log(`Ignored: duplicated PID '${USERID}'.`);
-    } else {
-      __villages[String(USERID)] = village;
-      console.log("Ok.");
-    }
+  // Migrate any out-of-date saves
+  for (const userid of Object.keys(__saves)) {
+    const modified = migrate_loaded_save(__saves[userid]);
+    if (modified) await persist(userid);
   }
 
-  // Saves in /saves
-  for (const file of fs.readdirSync(SAVES_DIR)) {
-    if (!file.endsWith(".save.json")) continue;
-    process.stdout.write(` * Loading save at ${file}... `);
-    let save;
-    try {
-      save = JSON.parse(fs.readFileSync(path.join(SAVES_DIR, file), "utf-8"));
-    } catch (e) {
-      console.log("Corrupted JSON.");
-      continue;
-    }
-    if (!is_valid_village(save)) {
-      console.log("Invalid Save.");
-      continue;
-    }
-    const USERID = save.playerInfo.pid;
-    let map_name;
-    try {
-      map_name = save.playerInfo.map_names[save.playerInfo.default_map];
-    } catch (e) {
-      map_name = "?";
-    }
-    console.log(`(${map_name}) Ok.`);
-    __saves[String(USERID)] = save;
-    const modified = migrate_loaded_save(save); // check save version for migration
-    if (modified) save_session(USERID);
-  }
+  console.log(` * Loaded ${Object.keys(__saves).length} save(s) from MySQL.`);
 }
 
-// ---------- New village ----------
+// ---------- New empire (tied to an account) ----------
 
-function new_village() {
-  const USERID = crypto.randomUUID();
-  if (all_userid().includes(USERID)) {
-    throw new Error("UUID collision");
-  }
-  // Deep copy of init
+async function create_empire_for_account(account_id, userid, empireName) {
   const village = JSON.parse(JSON.stringify(__initial_village));
   village.version = version_code;
-  village.playerInfo.pid = USERID;
+  village.playerInfo.pid = userid;
+  if (empireName) {
+    village.playerInfo.name = empireName;
+    village.playerInfo.map_names = [empireName];
+  }
   village.maps[0].timestamp = timestamp_now();
-  village.privateState.dartsRandomSeed = Math.abs(Math.trunc((Math.pow(2, 16) - 1) * Math.random()));
-  __saves[USERID] = village;
-  save_session(USERID);
-  console.log("Done.");
-  return USERID;
+  village.privateState.dartsRandomSeed = Math.abs(
+    Math.trunc((Math.pow(2, 16) - 1) * Math.random())
+  );
+
+  __saves[userid] = village;
+  __accountOf[userid] = account_id;
+  await db.upsertSave(userid, account_id, village);
+  return userid;
+}
+
+function newUserId() {
+  return crypto.randomUUID();
 }
 
 // ---------- Access functions ----------
@@ -115,7 +77,7 @@ function all_saves_userid() {
 }
 
 function all_userid() {
-  return [...Object.keys(__villages), ...Object.keys(__saves)];
+  return Object.keys(__saves);
 }
 
 function save_info(USERID) {
@@ -128,51 +90,27 @@ function save_info(USERID) {
 }
 
 function all_saves_info() {
-  const saves_info = [];
-  for (const userid of Object.keys(__saves)) {
-    saves_info.push(save_info(userid));
-  }
-  return saves_info;
+  return Object.keys(__saves).map((userid) => save_info(userid));
 }
 
-// equivalent of session(USERID) in Python
+// equivalent of Python's session(USERID)
 function getSave(USERID) {
   if (typeof USERID !== "string") throw new Error("USERID must be a string");
   return USERID in __saves ? __saves[USERID] : null;
 }
 
+// No more static villages — neighbours are other players only.
 function neighbor_session(USERID) {
   if (typeof USERID !== "string") throw new Error("USERID must be a string");
-  if (USERID in __saves) return __saves[USERID];
-  if (USERID in __villages) return __villages[USERID];
-  return undefined;
+  return USERID in __saves ? __saves[USERID] : undefined;
 }
 
 function fb_friends_str(USERID) {
   const friends = [];
-  // static villages
-  for (const key of Object.keys(__villages)) {
-    const vill = __villages[key];
-    if (
-      vill.playerInfo.pid === Constant.NEIGHBOUR_ARTHUR_GUINEVERE_1 ||
-      vill.playerInfo.pid === Constant.NEIGHBOUR_ARTHUR_GUINEVERE_2 ||
-      vill.playerInfo.pid === Constant.NEIGHBOUR_ARTHUR_GUINEVERE_3
-    ) {
-      continue;
-    }
-    const frie = {};
-    frie.uid = vill.playerInfo.pid;
-    frie.pic_square = vill.playerInfo.pic;
-    if (!frie.pic_square) frie.pic_square = "/img/profile/1025.png";
-    friends.push(frie);
-  }
-  // other players
   for (const key of Object.keys(__saves)) {
     const vill = __saves[key];
     if (vill.playerInfo.pid === USERID) continue;
-    const frie = {};
-    frie.uid = vill.playerInfo.pid;
-    frie.pic_square = vill.playerInfo.pic;
+    const frie = { uid: vill.playerInfo.pid, pic_square: vill.playerInfo.pic };
     if (!frie.pic_square) frie.pic_square = "/img/profile/1025.png";
     friends.push(frie);
   }
@@ -181,36 +119,41 @@ function fb_friends_str(USERID) {
 
 function neighbors(USERID) {
   const out = [];
-  const collect = (collection, skipArthur) => {
-    for (const key of Object.keys(collection)) {
-      const vill = collection[key];
-      if (skipArthur) {
-        if (
-          vill.playerInfo.pid === Constant.NEIGHBOUR_ARTHUR_GUINEVERE_1 ||
-          vill.playerInfo.pid === Constant.NEIGHBOUR_ARTHUR_GUINEVERE_2 ||
-          vill.playerInfo.pid === Constant.NEIGHBOUR_ARTHUR_GUINEVERE_3
-        ) {
-          continue;
-        }
-      } else if (vill.playerInfo.pid === USERID) {
-        continue;
-      }
-      const neigh = vill.playerInfo;
-      neigh.coins = vill.maps[0].coins;
-      neigh.xp = vill.maps[0].xp;
-      neigh.level = vill.maps[0].level;
-      neigh.stone = vill.maps[0].stone;
-      neigh.wood = vill.maps[0].wood;
-      neigh.food = vill.maps[0].food;
-      out.push(neigh);
-    }
-  };
-  collect(__villages, true);
-  collect(__saves, false);
+  for (const key of Object.keys(__saves)) {
+    const vill = __saves[key];
+    if (vill.playerInfo.pid === USERID) continue;
+    const neigh = vill.playerInfo;
+    neigh.coins = vill.maps[0].coins;
+    neigh.xp = vill.maps[0].xp;
+    neigh.level = vill.maps[0].level;
+    neigh.stone = vill.maps[0].stone;
+    neigh.wood = vill.maps[0].wood;
+    neigh.food = vill.maps[0].food;
+    out.push(neigh);
+  }
   return out;
 }
 
-// ---------- Valid village check ----------
+// ---------- Persistency ----------
+
+async function persist(USERID) {
+  const data = __saves[USERID];
+  if (!data) return;
+  const account_id = __accountOf[USERID];
+  if (account_id === undefined) {
+    await db.updateSaveData(USERID, data);
+  } else {
+    await db.upsertSave(USERID, account_id, data);
+  }
+}
+
+// Called synchronously by the game logic after each command batch.
+// Persists to MySQL in the background; logs (does not crash) on error.
+function save_session(USERID) {
+  persist(USERID).catch((err) => {
+    console.error(` ! Failed to persist save for ${USERID}:`, err.message);
+  });
+}
 
 function is_valid_village(save) {
   if (!("playerInfo" in save) || !("maps" in save) || !("privateState" in save)) {
@@ -225,23 +168,10 @@ function is_valid_village(save) {
   return true;
 }
 
-// ---------- Persistency ----------
-
-function backup_session(USERID) {
-  // TODO
-}
-
-function save_session(USERID) {
-  const file = `${USERID}.save.json`;
-  process.stdout.write(` * Saving village at ${file}... `);
-  const village = getSave(USERID);
-  fs.writeFileSync(path.join(SAVES_DIR, file), JSON.stringify(village, null, 4));
-  console.log("Done.");
-}
-
 module.exports = {
   load_saved_villages,
-  new_village,
+  create_empire_for_account,
+  newUserId,
   all_saves_userid,
   all_userid,
   save_info,
@@ -251,6 +181,6 @@ module.exports = {
   fb_friends_str,
   neighbors,
   is_valid_village,
-  backup_session,
   save_session,
+  persist,
 };

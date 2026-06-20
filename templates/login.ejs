@@ -1,19 +1,24 @@
 <!DOCTYPE html>
 <html lang="en">
 	<head>
-		<!-- Meta -->
 		<meta charset="utf-8"/>
-		<!-- Title and Icon -->
 		<title id="pageTitle">Social Empires</title>
 		<link rel="shortcut icon" href="img/icon.gif"/>
 		<link rel="icon" type="image/png" href="img/icon.gif"/>
-		<!-- CSS -->
 		<link rel="stylesheet" href="css/facebook.css"/>
+		<style>
+			.auth-wrap { max-width: 420px; margin: 0 auto; text-align: left; font-size: 13px; }
+			.auth-box { border: 1px solid #ccc; border-radius: 6px; padding: 16px; margin-bottom: 16px; background: #fafafa; }
+			.auth-box h3 { margin: 0 0 10px 0; }
+			.auth-box label { display: block; margin: 8px 0 2px; font-weight: bold; }
+			.auth-box input { width: 100%; height: 26px; box-sizing: border-box; padding: 2px 6px; }
+			.auth-box button { margin-top: 12px; height: 28px; font-size: 14px; cursor: pointer; }
+			.auth-error { color: #b00; margin: 8px 0; font-weight: bold; }
+		</style>
 	</head>
 	<body class="ego_wide canvas center_fixed_width_app fbx UIPage_LoggedOut liquid hideBanner Locale_en_US" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); overflow: auto;">
 		<center><img src="img/logo.png" style="width: 200px;"/></center>
 		<div class="mvl ptm uiInterstitial canvas_error_page uiInterstitialLarge uiBoxWhite">
-			<!-- HEAD TITLE -->
 			<div class="uiHeader uiHeaderBottomBorder mhl mts uiHeaderPage interstitialHeader">
 				<div class="clearfix uiHeaderTop">
 					<div>
@@ -25,57 +30,34 @@
 					</div>
 				</div>
 			</div>
-			<!-- LOGIN CONTENT -->
-			<div class="phl ptm uiInterstitialContent" style="overflow: auto; display: inblock;">
+			<div class="phl ptm uiInterstitialContent" style="overflow: auto;">
 				<br>
-				<div style="margin-left:20px; font-size:13px; float: left;">
-					<% if (saves_info && saves_info.length) { %>
-					<form method="post">
-						<!-- VILLAGE SELECTION -->
-						<b>Select a village</b>
-						<br><br>
-						<div style="float: left; margin-right: 4px;">
-							<img src="img/villager.png" style="height: 27px; margin-top: 0px;">
-						</div>
-						<div style="float: left">
-							<select id="USERID" name="USERID" style="height: 27px; min-width: 330px;" required>
-								<% saves_info.forEach(function(save){ %>
-								<option value="<%= save.userid %>" title="<%= save.userid %>"><%= save.name %> ~ level <%= save.level %> (<%= save.xp %> xp)</option>
-								<% }); %>
-							</select>
-						</div>
-						<br><br>
-						<br>
-						<!-- RELEASE SELECTION -->
-						<b>Game version</b>
-						<br><br>
-						<div style="overflow: auto; display: inblock;">
-							<div style="float: left">
-								<div style="float: left; margin-right: 4px;">
-									<img src="img/knight.png" style="height: 27px; margin-top: 0px;">
-								</div>
-								<div style="float: left">
-									<select id="GAMEVERSION" name="GAMEVERSION" style="height: 24px;" required>
-										<option value="SocialEmpires0926bsec.swf">0.9.26b (Working)</option>
-										<option value="SocialEmpires1.1.5sec.swf">1.1.5 (Experimental)</option>
-										<option value="SocialEmpires1.4.07sec.swf">1.4.07 (Broken)</option>
-									</select>
-								</div>
-								<br><br> <i>Tip: 0.9.26b Contains legacy Troll Missions!</i>
-								<br><br>
-							</div>
-							<div style="float: right;">
-								<button type="submit" style="font-size:14px; height: 25px">Log in</button>
-							</div>
-						</div>
-					</form>
-					<br>
-					<!-- NEW VILLAGE -->
-					<p style="font-size:13px; display: inline;">Or </p>
+				<div class="auth-wrap">
+					<% if (typeof error !== "undefined" && error) { %>
+						<div class="auth-error"><%= error %></div>
 					<% } %>
-					<p style="font-size:13px; display: inline;">
-						<b><a href="/new.html">Create a new empire</a></b>
-					</p>
+
+					<!-- LOGIN -->
+					<form class="auth-box" method="post" action="/login">
+						<h3>Log in</h3>
+						<label for="login_user">Username</label>
+						<input id="login_user" name="username" type="text" autocomplete="username" required>
+						<label for="login_pass">Password</label>
+						<input id="login_pass" name="password" type="password" autocomplete="current-password" required>
+						<button type="submit">Log in</button>
+					</form>
+
+					<!-- REGISTER -->
+					<form class="auth-box" method="post" action="/register">
+						<h3>Create an account</h3>
+						<label for="reg_user">Username <span style="font-weight:normal;">(3-32, letters/digits/_)</span></label>
+						<input id="reg_user" name="username" type="text" autocomplete="username" required>
+						<label for="reg_empire">Empire name</label>
+						<input id="reg_empire" name="empire" type="text" placeholder="My Empire">
+						<label for="reg_pass">Password <span style="font-weight:normal;">(min 4 chars)</span></label>
+						<input id="reg_pass" name="password" type="password" autocomplete="new-password" required>
+						<button type="submit">Create account &amp; empire</button>
+					</form>
 				</div>
 			</div>
 		</div>

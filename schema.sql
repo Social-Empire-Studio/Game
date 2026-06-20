@@ -1,0 +1,16 @@
+CREATE TABLE IF NOT EXISTS accounts (
+  id            INT AUTO_INCREMENT PRIMARY KEY,
+  username      VARCHAR(64)  NOT NULL UNIQUE,
+  password_hash VARCHAR(255) NOT NULL,
+  userid        VARCHAR(64)  NOT NULL UNIQUE,
+  created_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+
+CREATE TABLE IF NOT EXISTS saves (
+  userid     VARCHAR(64) NOT NULL PRIMARY KEY,
+  account_id INT         NOT NULL,
+  data       JSON        NOT NULL,
+  updated_at TIMESTAMP   DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  CONSTRAINT fk_saves_account FOREIGN KEY (account_id)
+    REFERENCES accounts(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
